@@ -1250,75 +1250,53 @@
       });
     }
 
-    // Função principal do botão "Imprimir / Salvar em PDF"
-    async function baixarPDFModeloWord(botaoElemento) {
-      const validacao = ContractValidator.validarModelo(InspectionModel);
-      if (!validacao.valido) {
-        exibirStatusValidacao();
-        alert("Preencha os campos obrigatórios antes de gerar o PDF:\n- " + validacao.erros.join("\n- "));
-        return;
-      }
+   async function baixarPDFModeloWord(botaoElemento) {
+  const validacao = ContractValidator.validarModelo(InspectionModel);
+  if (!validacao.valido) {
+    exibirStatusValidacao();
+    alert("Preencha os campos obrigatórios antes de gerar o PDF:\n- " + validacao.erros.join("\n- "));
+    return;
+  }
 
-      const textoOriginal = botaoElemento ? botaoElemento.innerHTML : "🖨️ Imprimir / Salvar em PDF";
-      const nomeLimpo = montarNomeBaseArquivo();
-      renderizarDocumentoRI();
+  const textoOriginal = botaoElemento ? botaoElemento.innerHTML : "🖨️ Imprimir / Salvar em PDF";
+  const nomeLimpo = montarNomeBaseArquivo();
+  
+  // Garante que a pré-visualização está atualizada com os dados exatos do modelo
+  renderizarDocumentoRI();
 
-      try {
-        if (botaoElemento) {
-          botaoElemento.disabled = true;
-          botaoElemento.innerHTML = "⏳ Gerando PDF igual ao Word...";
-        }
-
-        // 1. Tenta converter via Google Apps Script usando o pacote .docx fiel ao modelo Word
-        const docxBlob = await construirBlobDocxOpenXML();
-        const docxBase64 = await blobParaBase64(docxBlob);
-
-        const resposta = await fetch(URL_CONVERSOR_PDF, {
-          method: "POST",
-          headers: { "Content-Type": "text/plain;charset=utf-8" },
-          body: JSON.stringify({
-            fileName: nomeLimpo,
-            docxBase64: docxBase64
-          })
-        });
-
-        const resultado = await resposta.json();
-        if (!resultado.sucesso) {
-          throw new Error(resultado.erro || "Falha na resposta do Google Apps Script");
-        }
-
-        const bytesPdf = atob(resultado.pdfBase64);
-        const byteArray = new Uint8Array(bytesPdf.length);
-        for (let i = 0; i < bytesPdf.length; i++) {
-          byteArray[i] = bytesPdf.charCodeAt(i);
-        }
-        const pdfBlob = new Blob([byteArray], { type: "application/pdf" });
-
-        reservarNumeroDefinitivo(InspectionModel.numero);
-        registrarNoHistorico("PDF");
-        saveAs(pdfBlob, `${nomeLimpo}.pdf`);
-
-      } catch (erroAppsScript) {
-        console.warn("A usar geração direta local de PDF (fallback do Apps Script):", erroAppsScript);
-        // 2. Fallback automático: gera e descarrega o PDF diretamente a partir da folha A4 do modelo Word sem abrir a janela de impressão
-        const elementoFolhaWord = document.getElementById("preview-documento-ri");
-        await html2pdf().set({
-          margin: [8, 8, 8, 8],
-          filename: `${nomeLimpo}.pdf`,
-          image: { type: "jpeg", quality: 0.98 },
-          html2canvas: { scale: 2, useCORS: true },
-          jsPDF: { unit: "mm", format: "a4", orientation: "portrait" }
-        }).from(elementoFolhaWord).save();
-
-        reservarNumeroDefinitivo(InspectionModel.numero);
-        registrarNoHistorico("PDF");
-      } finally {
-        if (botaoElemento) {
-          botaoElemento.disabled = false;
-          botaoElemento.innerHTML = textoOriginal;
-        }
-      }
+  try {
+    if (botaoElemento) {
+      botaoElemento.disabled = true;
+      botaoElemento.innerHTML = "⏳ A gerar PDF idêntico ao modelo...";
     }
+
+    const elementoFolha = document.getElementById("preview-documento-ri");
+
+    // Configuração exata para o PDF respeitar as margens e o layout A4 oficial da 2ª CRS
+    const opcoes = {
+      margin:       [10, 10, 10, 10], // margens em mm
+      filename:     `${nomeLimpo}.pdf`,
+      image:        { type: 'jpeg', quality: 0.98 },
+      html2canvas:  { scale: 2, useCORS: true, letterRendering: true },
+      jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' }
+    };
+
+    // Gera o PDF diretamente no navegador mantendo 100% da fidelidade visual do modelo
+    await html2pdf().set(opcoes).from(elementoFolha).save();
+
+    reservarNumeroDefinitivo(InspectionModel.numero);
+    registrarNoHistorico("PDF");
+
+  } catch (erro) {
+    console.error("Erro ao gerar PDF:", erro);
+    alert("Erro ao gerar o PDF. Verifique o console.");
+  } finally {
+    if (botaoElemento) {
+      botaoElemento.disabled = false;
+      botaoElemento.innerHTML = textoOriginal;
+    }
+  }
+}
 
     // =========================================================================
     // 11. GESTÃO DE RASCUNHOS, HISTÓRICO E NOVA INSPEÇÃO
