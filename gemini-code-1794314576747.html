@@ -1,0 +1,1466 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Gerador de Relatório de Inspeção (RI) - 2ª CRS / SES-RS</title>
+
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- SheetJS (Leitura de Excel .xlsx / .csv) -->
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+  <!-- JSZip para empacotamento OpenXML (.docx) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <!-- FileSaver -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+  <!-- html2pdf.js (Fallback de download direto de PDF fiel ao modelo Word sem janela de impressão) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+
+  <style>
+    /* Estilos estritos do Modelo Novo (Word / PDF A4) */
+    .ri-doc-sheet {
+      width: 210mm;
+      min-height: 297mm;
+      margin: 0 auto;
+      background: #ffffff;
+      color: #000000;
+      font-family: Arial, Helvetica, sans-serif;
+      font-size: 10pt;
+      line-height: 1.25;
+      padding: 12mm 15mm;
+      box-sizing: border-box;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.12);
+    }
+    .ri-table {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+      margin-bottom: 6px;
+      font-family: Arial, Helvetica, sans-serif;
+      font-size: 9.5pt;
+    }
+    .ri-table th,
+    .ri-table td {
+      border: 1px solid #000000;
+      padding: 4px 6px;
+      vertical-align: top;
+      word-wrap: break-word;
+    }
+    .ri-section-title {
+      background-color: #d9d9d9;
+      font-weight: bold;
+      text-transform: uppercase;
+      text-align: center;
+      font-size: 9.5pt;
+      padding: 4px;
+      border: 1px solid #000000;
+    }
+    .ri-label {
+      font-weight: bold;
+      font-size: 8.5pt;
+      display: block;
+      margin-bottom: 2px;
+    }
+    .ri-value {
+      font-size: 9.5pt;
+      min-height: 14px;
+    }
+    @media print {
+      body * {
+        visibility: hidden;
+      }
+      #preview-documento-ri,
+      #preview-documento-ri * {
+        visibility: visible;
+      }
+      #preview-documento-ri {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 100%;
+        box-shadow: none !important;
+        padding: 0 !important;
+      }
+    }
+  </style>
+</head>
+<body class="bg-slate-100 text-slate-800 min-h-screen flex flex-col">
+
+  <!-- CABEÇALHO DO SISTEMA -->
+  <header class="bg-blue-900 text-white shadow-md">
+    <div class="max-w-7xl mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+      <div class="flex items-center gap-3">
+        <div class="bg-white text-blue-900 font-extrabold px-3 py-1.5 rounded text-sm tracking-wider">2ª CRS</div>
+        <div>
+          <h1 class="text-lg font-bold leading-tight">Gerador de Relatório de Inspeção Sanitária (RI)</h1>
+          <p class="text-xs text-blue-200">Vigilância Sanitária de Alimentos — Modelo Novo Oficial</p>
+        </div>
+      </div>
+
+      <div class="flex flex-wrap items-center gap-2">
+        <label class="cursor-pointer bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold px-3 py-2 rounded shadow flex items-center gap-1.5 transition">
+          <span>📊 Carregar Planilha (.xlsx/.csv)</span>
+          <input type="file" id="inputExcel" accept=".xlsx,.xls,.csv" class="hidden" onchange="importarArquivoExcel(event)" />
+        </label>
+        <button onclick="abrirModalRascunhos()" class="bg-blue-800 hover:bg-blue-700 text-xs font-semibold px-3 py-2 rounded border border-blue-600 transition">
+          📝 Rascunhos
+        </button>
+        <button onclick="abrirModalHistorico()" class="bg-blue-800 hover:bg-blue-700 text-xs font-semibold px-3 py-2 rounded border border-blue-600 transition">
+          🗂️ Histórico de RIs
+        </button>
+        <button onclick="novaInspecao()" class="bg-amber-500 hover:bg-amber-400 text-slate-900 text-xs font-bold px-3 py-2 rounded shadow transition">
+          ➕ Novo RI
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- BARRA DE STATUS DA BASE DE DADOS -->
+  <div class="bg-blue-950 text-blue-100 text-xs py-1.5 px-4">
+    <div class="max-w-7xl mx-auto flex flex-wrap justify-between items-center gap-2">
+      <span id="statusBaseExcel">📂 Base local: Nenhum ficheiro Excel carregado (pode pesquisar se já tiver importado anteriormente).</span>
+      <span id="statusRascunho" class="text-emerald-300 font-medium">✓ Pronto para preenchimento</span>
+    </div>
+  </div>
+
+  <!-- BARRA DE ETAPAS (WIZARD 1 A 10) -->
+  <nav class="bg-white border-b border-slate-200 sticky top-0 z-20 shadow-sm">
+    <div class="max-w-7xl mx-auto px-4 py-2 overflow-x-auto">
+      <div id="barraWizard" class="flex items-center gap-1 min-w-max"></div>
+    </div>
+  </nav>
+
+  <!-- CONTEÚDO PRINCIPAL -->
+  <main class="max-w-7xl mx-auto w-full flex-1 px-4 py-6">
+
+    <!-- ETAPA 1: ESTABELECIMENTO -->
+    <section id="passo-1" class="passo-container bg-white rounded-xl shadow p-6">
+      <h2 class="text-lg font-bold text-blue-900 mb-1">1. Identificação do Estabelecimento</h2>
+      <p class="text-xs text-slate-500 mb-4">Pesquise pelo CNPJ, CPF, Razão Social ou Nome Fantasia na planilha de Alvarás de Alimentos da 2ª CRS ou preencha manualmente.</p>
+
+      <div class="mb-5 bg-slate-50 p-4 rounded-lg border border-slate-200">
+        <label class="block text-xs font-bold uppercase text-slate-600 mb-1">🔍 Buscar Estabelecimento na Base</label>
+        <div class="flex gap-2">
+          <input id="busca" list="listaEstabelecimentos" type="text" placeholder="Digite CNPJ, Razão Social ou Fantasia..."
+            class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-600 outline-none"
+            oninput="selecionarEstabelecimentoDaBase(this.value)" />
+          <datalist id="listaEstabelecimentos"></datalist>
+          <button type="button" onclick="limparBuscaEstabelecimento()" class="bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-semibold px-3 py-2 rounded-lg">
+            Limpar
+          </button>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div class="md:col-span-2">
+          <label class="block text-xs font-semibold text-slate-700 mb-1">1. Razão Social *</label>
+          <input id="razao" type="text" class="w-full border rounded-lg px-3 py-2 text-sm" oninput="atualizarEstadoFormulario()" />
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1">2. Nome Fantasia</label>
+          <input id="fantasia" type="text" class="w-full border rounded-lg px-3 py-2 text-sm" oninput="atualizarEstadoFormulario()" />
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1">3. CNPJ / CPF *</label>
+          <input id="cnpj" type="text" class="w-full border rounded-lg px-3 py-2 text-sm" placeholder="00.000.000/0000-00" oninput="atualizarEstadoFormulario()" />
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1">4. Município *</label>
+          <input id="municipio" type="text" class="w-full border rounded-lg px-3 py-2 text-sm" oninput="atualizarEstadoFormulario()" />
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1">5. Vencimento do Alvará</label>
+          <input id="vencimento" type="text" class="w-full border rounded-lg px-3 py-2 text-sm" placeholder="DD/MM/AAAA ou Sem alvará" oninput="atualizarEstadoFormulario()" />
+        </div>
+        <div class="md:col-span-2">
+          <label class="block text-xs font-semibold text-slate-700 mb-1">6. Endereço Completo (Rua, Nº, Bairro, CEP)</label>
+          <input id="endereco" type="text" class="w-full border rounded-lg px-3 py-2 text-sm" oninput="atualizarEstadoFormulario()" />
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1">7. Coordenadas Geográficas</label>
+          <input id="coordenadas" type="text" class="w-full border rounded-lg px-3 py-2 text-sm" placeholder="-27.358, -53.395" oninput="atualizarEstadoFormulario()" />
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1">8. Telefone</label>
+          <input id="telefone" type="text" class="w-full border rounded-lg px-3 py-2 text-sm" oninput="atualizarEstadoFormulario()" />
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1">9. E-mail</label>
+          <input id="email" type="email" class="w-full border rounded-lg px-3 py-2 text-sm" oninput="atualizarEstadoFormulario()" />
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1">10. Responsável Legal / Técnico</label>
+          <input id="responsavel" type="text" class="w-full border rounded-lg px-3 py-2 text-sm" oninput="atualizarEstadoFormulario()" />
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1">11. CPF / Conselho do Responsável</label>
+          <input id="cpfResp" type="text" class="w-full border rounded-lg px-3 py-2 text-sm" oninput="atualizarEstadoFormulario()" />
+        </div>
+      </div>
+    </section>
+
+    <!-- ETAPA 2: DATA E Nº DO RI -->
+    <section id="passo-2" class="passo-container hidden bg-white rounded-xl shadow p-6">
+      <h2 class="text-lg font-bold text-blue-900 mb-1">2. Data da Inspeção e Numeração do RI</h2>
+      <p class="text-xs text-slate-500 mb-4">O número do RI é controlado automaticamente para evitar duplicidade.</p>
+
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4 max-w-2xl">
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1">Número do RI *</label>
+          <div class="flex gap-2">
+            <input id="numero" type="text" class="w-full border rounded-lg px-3 py-2 text-sm font-bold text-blue-900" oninput="atualizarEstadoFormulario()" />
+            <button type="button" onclick="sugerirProximoNumero()" class="bg-blue-100 hover:bg-blue-200 text-blue-900 text-xs font-bold px-3 rounded-lg">
+              Auto
+            </button>
+          </div>
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1">Ano *</label>
+          <input id="ano" type="number" class="w-full border rounded-lg px-3 py-2 text-sm" oninput="atualizarEstadoFormulario()" />
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1">Data da Inspeção *</label>
+          <input id="data" type="date" class="w-full border rounded-lg px-3 py-2 text-sm" oninput="atualizarEstadoFormulario()" />
+        </div>
+      </div>
+    </section>
+
+    <!-- ETAPA 3: ATIVIDADES (CNAE E LEGISLAÇÃO) -->
+    <section id="passo-3" class="passo-container hidden bg-white rounded-xl shadow p-6">
+      <h2 class="text-lg font-bold text-blue-900 mb-1">3. Atividades Inspecionadas (CNAE) e Legislação</h2>
+      <p class="text-xs text-slate-500 mb-4">Selecione os CNAEs inspecionados. A base legal específica da ANVISA/SES-RS será vinculada automaticamente.</p>
+
+      <div id="containerCheckboxesCnae" class="grid grid-cols-1 md:grid-cols-2 gap-2.5 mb-4"></div>
+
+      <div class="mt-4 pt-4 border-t border-slate-200">
+        <label class="block text-xs font-semibold text-slate-700 mb-1">Adicionar atividade CNAE extra ou observação de atividade:</label>
+        <div class="flex gap-2">
+          <input id="selectCnaeExtra" type="text" placeholder="Ex: 1099-6/99 - Fabricação de outros produtos alimentícios" class="w-full border rounded-lg px-3 py-2 text-sm" />
+          <button type="button" onclick="adicionarCnaeExtra()" class="bg-blue-900 hover:bg-blue-800 text-white text-xs font-bold px-4 py-2 rounded-lg">
+            Adicionar
+          </button>
+        </div>
+      </div>
+
+      <div class="mt-4 bg-blue-50 border border-blue-200 rounded-lg p-3">
+        <span class="block text-xs font-bold text-blue-900 mb-1">Legislação Aplicável Vinculada Automaticamente:</span>
+        <p id="resumoLegislacaoCnae" class="text-xs text-slate-700"></p>
+      </div>
+    </section>
+
+    <!-- ETAPA 4: PESSOA CONTACTADA E EQUIPA INSPETORA -->
+    <section id="passo-4" class="passo-container hidden bg-white rounded-xl shadow p-6">
+      <h2 class="text-lg font-bold text-blue-900 mb-1">4. Pessoa Contactada e Equipa Inspetora</h2>
+      <p class="text-xs text-slate-500 mb-4">Informe quem acompanhou a inspeção no estabelecimento e os técnicos responsáveis.</p>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1">Pessoa Contactada (Nome / Cargo / CPF) *</label>
+          <input id="contatada" type="text" placeholder="Ex: João da Silva (Gerente - CPF 000.000.000-00)" class="w-full border rounded-lg px-3 py-2 text-sm" oninput="atualizarEstadoFormulario()" />
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1">Equipa Inspetora (Nomes e Matrículas/Cargos) *</label>
+          <input id="equipeInspetora" type="text" placeholder="Ex: Autoridade Sanitária 1 (ID 00000) / Autoridade Sanitária 2 (ID 00000)" class="w-full border rounded-lg px-3 py-2 text-sm" oninput="atualizarEstadoFormulario()" />
+        </div>
+      </div>
+    </section>
+
+    <!-- ETAPA 5: OBJETIVO DA INSPEÇÃO -->
+    <section id="passo-5" class="passo-container hidden bg-white rounded-xl shadow p-6">
+      <h2 class="text-lg font-bold text-blue-900 mb-1">5. Objetivo da Inspeção</h2>
+      <p class="text-xs text-slate-500 mb-4">Assinale o(s) motivo(s) da ação fiscalizatória.</p>
+
+      <div id="containerObjetivos" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 mb-4"></div>
+
+      <div>
+        <label class="block text-xs font-semibold text-slate-700 mb-1">Observações / Detalhamento do Objetivo (opcional):</label>
+        <input id="objetivoObs" type="text" placeholder="Ex: Processo PROA nº..." class="w-full border rounded-lg px-3 py-2 text-sm" oninput="atualizarEstadoFormulario()" />
+      </div>
+    </section>
+
+    <!-- ETAPA 6: NÃO CONFORMIDADES E REGISTO FOTOGRÁFICO -->
+    <section id="passo-6" class="passo-container hidden bg-white rounded-xl shadow p-6">
+      <div class="flex flex-wrap items-center justify-between gap-2 mb-4">
+        <div>
+          <h2 class="text-lg font-bold text-blue-900">6. Não Conformidades Constatadas e Fotos</h2>
+          <p class="text-xs text-slate-500">Registe cada não conformidade numerada e anexe fotografias se necessário.</p>
+        </div>
+        <label class="flex items-center gap-2 bg-emerald-50 border border-emerald-300 px-3 py-2 rounded-lg cursor-pointer">
+          <input id="semNC" type="checkbox" class="w-4 h-4" onchange="alternarSemNC(this.checked)" />
+          <span class="text-xs font-bold text-emerald-900">Não foram constatadas não conformidades no momento da inspeção</span>
+        </label>
+      </div>
+
+      <div id="blocoCadastroNC" class="bg-slate-50 p-4 rounded-lg border border-slate-200 mb-4">
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
+          <div class="md:col-span-2">
+            <label class="block text-xs font-semibold text-slate-700 mb-1">Descrição da Não Conformidade</label>
+            <textarea id="textoNovaNC" rows="2" placeholder="Descreva a irregularidade constatada..." class="w-full border rounded-lg px-3 py-2 text-sm"></textarea>
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1">Item / Base Legal (RDC / Portaria)</label>
+            <input id="baseLegalNovaNC" type="text" placeholder="Ex: RDC 275/2002, Anexo II, item 1.4" class="w-full border rounded-lg px-3 py-2 text-sm mb-2" />
+            <button type="button" onclick="adicionarNaoConformidade()" class="w-full bg-blue-900 hover:bg-blue-800 text-white text-xs font-bold py-2 px-3 rounded-lg transition">
+              ➕ Adicionar Não Conformidade
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div id="listaNaoConformidadesUI" class="space-y-2 mb-6"></div>
+
+      <!-- ANEXO DE FOTOS -->
+      <div class="border-t border-slate-200 pt-4">
+        <div class="flex items-center justify-between mb-3">
+          <span class="text-xs font-bold uppercase text-slate-700">📷 Registo Fotográfico (Opcional)</span>
+          <label class="cursor-pointer bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold px-3 py-2 rounded-lg">
+            <span>Anexar Fotografias</span>
+            <input id="inputFotos" type="file" accept="image/*" multiple class="hidden" onchange="importarFotos(event)" />
+          </label>
+        </div>
+        <div id="galeriaFotosUI" class="grid grid-cols-2 md:grid-cols-4 gap-3"></div>
+      </div>
+    </section>
+
+    <!-- ETAPA 7: CONCLUSÃO -->
+    <section id="passo-7" class="passo-container hidden bg-white rounded-xl shadow p-6">
+      <h2 class="text-lg font-bold text-blue-900 mb-1">7. Conclusão da Inspeção</h2>
+      <p class="text-xs text-slate-500 mb-4">Escolha o parecer conclusivo conforme o Modelo Novo da 2ª CRS.</p>
+
+      <div class="space-y-3" id="containerConclusoes"></div>
+
+      <div class="mt-4">
+        <label class="block text-xs font-semibold text-slate-700 mb-1">Observações Adicionais da Conclusão (opcional):</label>
+        <textarea id="conclusaoComplemento" rows="2" class="w-full border rounded-lg px-3 py-2 text-sm" oninput="atualizarEstadoFormulario()"></textarea>
+      </div>
+    </section>
+
+    <!-- ETAPA 8: DOCUMENTOS SOLICITADOS (A a E / C1 a C7) -->
+    <section id="passo-8" class="passo-container hidden bg-white rounded-xl shadow p-6">
+      <h2 class="text-lg font-bold text-blue-900 mb-1">8. Documentos Solicitados e Prazos</h2>
+      <p class="text-xs text-slate-500 mb-4">Selecione os documentos exigidos (Itens A a E e subitens C1 a C7 do Modelo Novo).</p>
+
+      <div class="mb-4 max-w-xs">
+        <label class="block text-xs font-semibold text-slate-700 mb-1">Prazo para cumprimento / entrega (em dias):</label>
+        <input id="prazoDocumentos" type="number" value="30" class="w-full border rounded-lg px-3 py-2 text-sm" oninput="atualizarEstadoFormulario()" />
+      </div>
+
+      <div id="containerDocumentosSolicitados" class="space-y-2.5"></div>
+    </section>
+
+    <!-- ETAPA 9: REVISAR -->
+    <section id="passo-9" class="passo-container hidden bg-white rounded-xl shadow p-6">
+      <div class="flex flex-wrap items-center justify-between gap-2 mb-4">
+        <div>
+          <h2 class="text-lg font-bold text-blue-900">9. Revisão do Relatório (Modelo Novo Oficial)</h2>
+          <p class="text-xs text-slate-500">Confira a pré-visualização exata antes de emitir o Word ou o PDF.</p>
+        </div>
+        <span id="alertaValidacaoRevisao" class="text-xs font-bold px-3 py-1.5 rounded"></span>
+      </div>
+
+      <div class="overflow-x-auto bg-slate-200 p-4 rounded-xl">
+        <div id="preview-documento-ri" class="ri-doc-sheet"></div>
+      </div>
+    </section>
+
+    <!-- ETAPA 10: EMITIR RELATÓRIO -->
+    <section id="passo-10" class="passo-container hidden bg-white rounded-xl shadow p-6">
+      <h2 class="text-lg font-bold text-blue-900 mb-1">10. Emitir e Exportar Relatório de Inspeção</h2>
+      <p class="text-xs text-slate-500 mb-6">Ambos os botões geram exatamente o mesmo documento oficial da 2ª CRS e registam o RI no histórico.</p>
+
+      <div id="painelErrosContrato" class="hidden mb-5 bg-red-50 border border-red-300 text-red-800 rounded-lg p-4 text-xs"></div>
+
+      <div class="flex flex-wrap items-center gap-4">
+        <!-- Botão Word -->
+        <button type="button" onclick="exportarWordModeloNovo()"
+          class="bg-emerald-700 hover:bg-emerald-600 text-white font-bold px-6 py-3.5 rounded-xl shadow-md flex items-center gap-2 transition">
+          <span>📄 Baixar Word (.doc)</span>
+        </button>
+
+        <!-- Botão Imprimir / Salvar em PDF estritamente igual ao Word -->
+        <button type="button" id="btnSalvarPDF" onclick="baixarPDFModeloWord(this)"
+          class="bg-[#234b82] hover:bg-[#1b3b68] text-white font-bold px-6 py-3.5 rounded-xl shadow-md flex items-center gap-2 transition">
+          <span>🖨️ Imprimir / Salvar em PDF</span>
+        </button>
+      </div>
+    </section>
+
+    <!-- NAVEGAÇÃO INFERIOR -->
+    <div class="mt-6 flex items-center justify-between">
+      <button id="btnAnterior" type="button" onclick="irParaPasso(passoAtual - 1)"
+        class="bg-slate-200 hover:bg-slate-300 text-slate-800 text-sm font-bold px-5 py-2.5 rounded-lg transition">
+        ← Etapa Anterior
+      </button>
+      <span id="indicadorPassoRodape" class="text-xs font-bold text-slate-500">Etapa 1 de 10</span>
+      <button id="btnProximo" type="button" onclick="irParaPasso(passoAtual + 1)"
+        class="bg-blue-900 hover:bg-blue-800 text-white text-sm font-bold px-5 py-2.5 rounded-lg shadow transition">
+        Próxima Etapa →
+      </button>
+    </div>
+
+  </main>
+
+  <!-- MODAL DE RASCUNHOS E HISTÓRICO -->
+  <div id="modalLista" class="fixed inset-0 bg-black/50 hidden items-center justify-center z-50 p-4">
+    <div class="bg-white rounded-xl shadow-xl max-w-3xl w-full max-h-[80vh] flex flex-col">
+      <div class="px-5 py-3 border-b flex items-center justify-between">
+        <h3 id="tituloModalLista" class="font-bold text-blue-900">Registos</h3>
+        <button onclick="fecharModalLista()" class="text-slate-500 hover:text-slate-800 font-bold text-lg">&times;</button>
+      </div>
+      <div id="conteudoModalLista" class="p-5 overflow-y-auto space-y-2 text-xs flex-1"></div>
+    </div>
+  </div>
+
+  <script>
+    // =========================================================================
+    // 1. CONFIGURAÇÃO DO CONVERSOR GOOGLE APPS SCRIPT (PDF FIEL AO WORD)
+    // =========================================================================
+    const URL_CONVERSOR_PDF = "https://script.google.com/macros/s/AKfycbx68kXgJsCSQbFfYttZlj2V_T3GBjqPTRL7JYr8KpjsTQ87soQ6mKkhk2xQ4wTsYHG_Qw/exec";
+
+    // =========================================================================
+    // 2. TABELAS DE DOMÍNIO (CNAEs, OBJETIVOS, CONCLUSÕES E DOCUMENTOS A-E / C1-C7)
+    // =========================================================================
+    const TABELA_CNAE_LEGISLACAO = [
+      { codigo: "1091-1/01", descricao: "Fabricação de produtos de panificação industrial", legislacao: "RDC ANVISA nº 275/2002; RDC ANVISA nº 711/2022; Portaria SES/RS nº 78/2009" },
+      { codigo: "1091-1/02", descricao: "Fabricação de produtos de padaria e confeitaria com predominância de produção própria", legislacao: "RDC ANVISA nº 216/2004; RDC ANVISA nº 275/2002; Portaria SES/RS nº 78/2009" },
+      { codigo: "1092-9/00", descricao: "Fabricação de biscoitos e bolachas", legislacao: "RDC ANVISA nº 275/2002; RDC ANVISA nº 711/2022" },
+      { codigo: "1093-7/01", descricao: "Fabricação de produtos derivados do cacau e de chocolates", legislacao: "RDC ANVISA nº 275/2002; RDC ANVISA nº 723/2022" },
+      { codigo: "1094-5/00", descricao: "Fabricação de massas alimentícias", legislacao: "RDC ANVISA nº 275/2002; RDC ANVISA nº 711/2022" },
+      { codigo: "1095-3/00", descricao: "Fabricação de especiarias, molhos, temperos e condimentos", legislacao: "RDC ANVISA nº 275/2002; RDC ANVISA nº 716/2022" },
+      { codigo: "1096-1/00", descricao: "Fabricação de alimentos e pratos prontos", legislacao: "RDC ANVISA nº 275/2002; Portaria SES/RS nº 78/2009" },
+      { codigo: "1031-7/00", descricao: "Fabricação de conservas de frutas", legislacao: "RDC ANVISA nº 275/2002; RDC ANVISA nº 715/2022" },
+      { codigo: "1032-5/99", descricao: "Fabricação de conservas de legumes e outros vegetais", legislacao: "RDC ANVISA nº 275/2002; RDC ANVISA nº 272/2005" },
+      { codigo: "1121-6/00", descricao: "Fabricação de águas envasadas e gelo", legislacao: "RDC ANVISA nº 173/2006; RDC ANVISA nº 717/2022" }
+    ];
+
+    const OPCOES_OBJETIVO = [
+      "Alvará Sanitário Inicial",
+      "Renovação de Alvará Sanitário",
+      "Inspeção de Rotina / Programada",
+      "Reinspeção / Verificação de Cumprimento",
+      "Atendimento a Denúncia / Solicitação MP",
+      "Investigação de Surto / Evento Adverso"
+    ];
+
+    const OPCOES_CONCLUSAO = [
+      {
+        id: "A",
+        titulo: "Opção A — Satisfatório (Em Conformidade)",
+        texto: "O estabelecimento encontra-se em condições técnico-sanitárias satisfatórias no momento da inspeção, estando APTO à concessão/renovação do Alvará de Saúde para as atividades inspecionadas."
+      },
+      {
+        id: "B",
+        titulo: "Opção B — Com Pendências / Necessidade de Adequação",
+        texto: "Foram constatadas não conformidades com a legislação sanitária vigente que devem ser corrigidas nos prazos estabelecidos. A liberação do Alvará Sanitário fica condicionada à comprovação do cumprimento das exigências."
+      }
+    ];
+
+    const DOCUMENTOS_PADRAO = [
+      { id: "A", texto: "A) Relatório fotográfico e documental comprovando a resolução das não conformidades apontadas neste Relatório de Inspeção." },
+      { id: "B", texto: "B) Atestados de Saúde Ocupacional (ASO) atualizados dos manipuladores de alimentos." },
+      { id: "C", texto: "C) Documentação para Renovação / Concessão de Alvará Sanitário:" },
+      { id: "C1", texto: "C1) Requerimento padrão dirigido à Vigilância Sanitária Estadual (2ª CRS) devidamente assinado." },
+      { id: "C2", texto: "C2) Cartão CNPJ atualizado." },
+      { id: "C3", texto: "C3) Cópia do Alvará Sanitário anterior (em caso de renovação)." },
+      { id: "C4", texto: "C4) Comprovante de pagamento da Taxa de Serviços Diversos (ou declaração de isenção/enquadramento)." },
+      { id: "C5", texto: "C5) Comprovante de limpeza e desinfeção dos reservatórios de água e controle integrado de pragas." },
+      { id: "C6", texto: "C6) Laudo laboratorial de potabilidade da água de abastecimento conforme Portaria GM/MS nº 888/2021." },
+      { id: "C7", texto: "C7) Certificado de inclusão no Programa Estadual de Agroindústria Familiar (se aplicável)." },
+      { id: "D", texto: "D) Manual de Boas Práticas de Fabricação (MBPF) e Procedimentos Operacionais Padronizados (POPs) atualizados e assinados." },
+      { id: "E", texto: "E) Lista de verificação das Boas Práticas de Fabricação conforme Anexo II da RDC ANVISA nº 275/2002 preenchida." }
+    ];
+
+    const NOMES_PASSOS = [
+      "1. Estabelecimento",
+      "2. Data e Nº RI",
+      "3. Atividades (CNAE)",
+      "4. Contactado",
+      "5. Objetivo",
+      "6. Não Conformidades",
+      "7. Conclusão",
+      "8. Documentos",
+      "9. Revisar",
+      "10. Emitir Relatório"
+    ];
+
+    // =========================================================================
+    // 3. ESTADO CENTRAL DA INSPEÇÃO (InspectionModel)
+    // =========================================================================
+    let passoAtual = 1;
+    let baseEstabelecimentos = [];
+
+    const InspectionModel = {
+      razao: "",
+      fantasia: "",
+      cnpj: "",
+      municipio: "",
+      endereco: "",
+      telefone: "",
+      email: "",
+      responsavel: "",
+      cpfResp: "",
+      coordenadas: "",
+      vencimento: "",
+      numero: "",
+      ano: new Date().getFullYear().toString(),
+      data: new Date().toISOString().split("T")[0],
+      contatada: "",
+      equipeInspetora: "",
+      objetivos: ["Renovação de Alvará Sanitário"],
+      objetivoObs: "",
+      atividades: [],
+      semNC: false,
+      naoConformidades: [],
+      fotos: [],
+      conclusaoId: "A",
+      conclusaoComplemento: "",
+      prazoDocumentos: "30",
+      documentosSolicitados: ["A", "C", "C1", "C2", "C5", "C6", "D"]
+    };
+
+    // =========================================================================
+    // 4. VALIDADOR DE CONTRATO (ContractValidator)
+    // =========================================================================
+    const ContractValidator = {
+      validarModelo(m) {
+        const erros = [];
+        if (!m.razao || !m.razao.trim()) erros.push("Informe a Razão Social do estabelecimento (Etapa 1).");
+        if (!m.cnpj || !m.cnpj.trim()) erros.push("Informe o CNPJ ou CPF do estabelecimento (Etapa 1).");
+        if (!m.municipio || !m.municipio.trim()) erros.push("Informe o Município (Etapa 1).");
+        if (!m.numero || !m.numero.trim()) erros.push("Informe o Número do RI (Etapa 2).");
+        if (!m.data || !m.data.trim()) erros.push("Informe a Data da Inspeção (Etapa 2).");
+        if (!m.semNC && m.naoConformidades.length === 0) {
+          erros.push("Registe pelo menos uma Não Conformidade ou marque 'Não foram constatadas não conformidades' (Etapa 6).");
+        }
+        return {
+          valido: erros.length === 0,
+          erros
+        };
+      }
+    };
+
+    // =========================================================================
+    // 5. INICIALIZAÇÃO E NAVEGAÇÃO
+    // =========================================================================
+    window.addEventListener("DOMContentLoaded", init);
+
+    function init() {
+      carregarBaseSalvaLocalmente();
+      sugerirProximoNumero();
+      document.getElementById("ano").value = InspectionModel.ano;
+      document.getElementById("data").value = InspectionModel.data;
+
+      construirBarraWizard();
+      renderizarCheckboxesCnae();
+      renderizarObjetivos();
+      renderizarNaoConformidades();
+      renderizarConclusoes();
+      renderizarDocumentosSolicitados();
+      irParaPasso(1);
+    }
+
+    function construirBarraWizard() {
+      const barra = document.getElementById("barraWizard");
+      barra.innerHTML = NOMES_PASSOS.map((titulo, idx) => {
+        const num = idx + 1;
+        const ativo = num === passoAtual;
+        return `
+          <button type="button" onclick="irParaPasso(${num})"
+            class="px-3 py-1.5 rounded-lg text-xs font-bold transition whitespace-nowrap ${
+              ativo
+                ? "bg-blue-900 text-white shadow"
+                : "bg-slate-100 hover:bg-slate-200 text-slate-600"
+            }">
+            ${titulo}
+          </button>
+        `;
+      }).join("");
+    }
+
+    function irParaPasso(num) {
+      if (num < 1 || num > 10) return;
+      atualizarEstadoFormulario();
+      passoAtual = num;
+
+      document.querySelectorAll(".passo-container").forEach((el, idx) => {
+        el.classList.toggle("hidden", idx + 1 !== passoAtual);
+      });
+
+      document.getElementById("btnAnterior").disabled = passoAtual === 1;
+      document.getElementById("btnAnterior").classList.toggle("opacity-40", passoAtual === 1);
+      document.getElementById("btnProximo").classList.toggle("hidden", passoAtual === 10);
+      document.getElementById("indicadorPassoRodape").textContent = `Etapa ${passoAtual} de 10`;
+
+      construirBarraWizard();
+
+      if (passoAtual === 9 || passoAtual === 10) {
+        renderizarDocumentoRI();
+        exibirStatusValidacao();
+      }
+    }
+
+    // =========================================================================
+    // 6. IMPORTAÇÃO DE PLANILHA EXCEL (SheetJS) E BUSCA DE ESTABELECIMENTOS
+    // =========================================================================
+    function importarArquivoExcel(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = function (e) {
+        try {
+          const data = new Uint8Array(e.target.result);
+          const workbook = XLSX.read(data, { type: "array" });
+          const primeiraAba = workbook.SheetNames[0];
+          const linhas = XLSX.utils.sheet_to_json(workbook.Sheets[primeiraAba], { defval: "" });
+
+          baseEstabelecimentos = linhas.map((row) => ({
+            razao: String(row["RAZÃO SOCIAL"] || row["Razão Social"] || row["RAZAO_SOCIAL"] || row["Estabelecimento"] || row["Nome"] || "").trim(),
+            fantasia: String(row["NOME FANTASIA"] || row["Fantasia"] || row["NOME_FANTASIA"] || "").trim(),
+            cnpj: String(row["CNPJ"] || row["CNPJ/CPF"] || row["CPF"] || "").trim(),
+            municipio: String(row["MUNICÍPIO"] || row["Município"] || row["MUNICIPIO"] || row["Cidade"] || "").trim(),
+            endereco: String(row["ENDEREÇO"] || row["Endereço"] || row["ENDERECO"] || row["Logradouro"] || "").trim(),
+            telefone: String(row["TELEFONE"] || row["Telefone"] || row["Fone"] || "").trim(),
+            email: String(row["EMAIL"] || row["E-mail"] || row["E-MAIL"] || "").trim(),
+            cnae: String(row["CNAE"] || row["Atividade"] || "").trim(),
+            vencimento: String(row["VENCIMENTO"] || row["Validade"] || row["Situação"] || "").trim()
+          })).filter(item => item.razao || item.cnpj);
+
+          localStorage.setItem("ri_2crs_base_excel", JSON.stringify(baseEstabelecimentos));
+          popularDatalistEstabelecimentos();
+          document.getElementById("statusBaseExcel").textContent = `✅ Base carregada: ${baseEstabelecimentos.length} estabelecimentos disponíveis para busca rápida.`;
+        } catch (err) {
+          alert("Erro ao ler a planilha: " + err.message);
+        }
+      };
+      reader.readAsArrayBuffer(file);
+    }
+
+    function carregarBaseSalvaLocalmente() {
+      try {
+        const salvo = localStorage.getItem("ri_2crs_base_excel");
+        if (salvo) {
+          baseEstabelecimentos = JSON.parse(salvo);
+          popularDatalistEstabelecimentos();
+          document.getElementById("statusBaseExcel").textContent = `📂 Base local ativa: ${baseEstabelecimentos.length} estabelecimentos sincronizados.`;
+        }
+      } catch (e) {}
+    }
+
+    function popularDatalistEstabelecimentos() {
+      const dl = document.getElementById("listaEstabelecimentos");
+      dl.innerHTML = baseEstabelecimentos.map((est) => {
+        const chave = `${est.cnpj} - ${est.razao}${est.fantasia ? " (" + est.fantasia + ")" : ""} [${est.municipio}]`;
+        return `<option value="${escapeHtml(chave)}"></option>`;
+      }).join("");
+    }
+
+    function selecionarEstabelecimentoDaBase(valor) {
+      if (!valor) return;
+      const encontrado = baseEstabelecimentos.find((est) => {
+        const chave = `${est.cnpj} - ${est.razao}${est.fantasia ? " (" + est.fantasia + ")" : ""} [${est.municipio}]`;
+        return chave.toLowerCase() === valor.toLowerCase() || (est.cnpj && valor.includes(est.cnpj));
+      });
+
+      if (encontrado) {
+        document.getElementById("razao").value = encontrado.razao;
+        document.getElementById("fantasia").value = encontrado.fantasia;
+        document.getElementById("cnpj").value = encontrado.cnpj;
+        document.getElementById("municipio").value = encontrado.municipio;
+        document.getElementById("endereco").value = encontrado.endereco;
+        document.getElementById("telefone").value = encontrado.telefone;
+        document.getElementById("email").value = encontrado.email;
+        document.getElementById("vencimento").value = encontrado.vencimento;
+        atualizarEstadoFormulario();
+      }
+    }
+
+    function limparBuscaEstabelecimento() {
+      document.getElementById("busca").value = "";
+    }
+
+    // =========================================================================
+    // 7. CONTROLO DE NUMERAÇÃO DO RI
+    // =========================================================================
+    function obterProximoNumeroLivre() {
+      const ultimo = parseInt(localStorage.getItem("ri_2crs_ultimo_numero") || "0", 10);
+      return String(ultimo + 1).padStart(3, "0");
+    }
+
+    function sugerirProximoNumero() {
+      const prox = obterProximoNumeroLivre();
+      InspectionModel.numero = prox;
+      const el = document.getElementById("numero");
+      if (el) el.value = prox;
+    }
+
+    function reservarNumeroDefinitivo(numStr) {
+      const num = parseInt(numStr, 10);
+      const ultimo = parseInt(localStorage.getItem("ri_2crs_ultimo_numero") || "0", 10);
+      if (!isNaN(num) && num > ultimo) {
+        localStorage.setItem("ri_2crs_ultimo_numero", String(num));
+      }
+    }
+
+    // =========================================================================
+    // 8. RENDERIZAÇÃO DE CNAEs, OBJETIVOS, NCs, FOTOS E DOCUMENTOS
+    // =========================================================================
+    function renderizarCheckboxesCnae() {
+      const cont = document.getElementById("containerCheckboxesCnae");
+      cont.innerHTML = TABELA_CNAE_LEGISLACAO.map((item) => {
+        const marcado = InspectionModel.atividades.some((a) => a.codigo === item.codigo);
+        return `
+          <label class="flex items-start gap-2 p-2.5 border rounded-lg bg-slate-50 hover:bg-blue-50 cursor-pointer text-xs">
+            <input type="checkbox" class="mt-0.5" ${marcado ? "checked" : ""}
+              onchange="alternarCnae('${item.codigo}', this.checked)" />
+            <div>
+              <span class="font-bold text-blue-950">${item.codigo}</span> — ${item.descricao}
+              <div class="text-[11px] text-slate-500 mt-0.5">${item.legislacao}</div>
+            </div>
+          </label>
+        `;
+      }).join("");
+      atualizarResumoLegislacao();
+    }
+
+    function alternarCnae(codigo, marcado) {
+      const itemPadrao = TABELA_CNAE_LEGISLACAO.find((c) => c.codigo === codigo);
+      if (marcado && itemPadrao) {
+        if (!InspectionModel.atividades.some((a) => a.codigo === codigo)) {
+          InspectionModel.atividades.push({ ...itemPadrao });
+        }
+      } else {
+        InspectionModel.atividades = InspectionModel.atividades.filter((a) => a.codigo !== codigo);
+      }
+      atualizarResumoLegislacao();
+      salvarRascunhoAutomatico();
+    }
+
+    function adicionarCnaeExtra() {
+      const input = document.getElementById("selectCnaeExtra");
+      const val = input.value.trim();
+      if (!val) return;
+      InspectionModel.atividades.push({
+        codigo: "EXTRA",
+        descricao: val,
+        legislacao: "RDC ANVISA nº 275/2002; Portaria SES/RS nº 78/2009"
+      });
+      input.value = "";
+      renderizarCheckboxesCnae();
+    }
+
+    function buscarLegislacaoPorCnae() {
+      const baseFixa = ["Lei Federal nº 6.437/1977", "Decreto Estadual nº 23.430/1974", "RDC ANVISA nº 275/2002", "Portaria SES/RS nº 78/2009"];
+      const extras = InspectionModel.atividades.flatMap((a) => a.legislacao.split(";").map((s) => s.trim()));
+      return [...new Set([...baseFixa, ...extras])].filter(Boolean).join("; ");
+    }
+
+    function atualizarResumoLegislacao() {
+      const el = document.getElementById("resumoLegislacaoCnae");
+      if (el) el.textContent = buscarLegislacaoPorCnae();
+    }
+
+    function renderizarObjetivos() {
+      const cont = document.getElementById("containerObjetivos");
+      cont.innerHTML = OPCOES_OBJETIVO.map((obj) => {
+        const checked = InspectionModel.objetivos.includes(obj);
+        return `
+          <label class="flex items-center gap-2 p-2.5 border rounded-lg bg-slate-50 cursor-pointer text-xs font-medium">
+            <input type="checkbox" ${checked ? "checked" : ""} onchange="alternarObjetivo('${obj}', this.checked)" />
+            <span>${obj}</span>
+          </label>
+        `;
+      }).join("");
+    }
+
+    function alternarObjetivo(obj, marcado) {
+      if (marcado) {
+        if (!InspectionModel.objetivos.includes(obj)) InspectionModel.objetivos.push(obj);
+      } else {
+        InspectionModel.objetivos = InspectionModel.objetivos.filter((o) => o !== obj);
+      }
+      salvarRascunhoAutomatico();
+    }
+
+    function alternarSemNC(marcado) {
+      InspectionModel.semNC = marcado;
+      document.getElementById("blocoCadastroNC").classList.toggle("opacity-40", marcado);
+      document.getElementById("blocoCadastroNC").classList.toggle("pointer-events-none", marcado);
+      if (marcado) {
+        InspectionModel.conclusaoId = "A";
+        renderizarConclusoes();
+      }
+      renderizarNaoConformidades();
+      salvarRascunhoAutomatico();
+    }
+
+    function adicionarNaoConformidade() {
+      const desc = document.getElementById("textoNovaNC").value.trim();
+      const base = document.getElementById("baseLegalNovaNC").value.trim() || "RDC ANVISA nº 275/2002";
+      if (!desc) return;
+      InspectionModel.naoConformidades.push({ descricao: desc, baseLegal: base });
+      InspectionModel.conclusaoId = "B";
+      document.getElementById("textoNovaNC").value = "";
+      document.getElementById("baseLegalNovaNC").value = "";
+      renderizarNaoConformidades();
+      renderizarConclusoes();
+      salvarRascunhoAutomatico();
+    }
+
+    function removerNaoConformidade(idx) {
+      InspectionModel.naoConformidades.splice(idx, 1);
+      renderizarNaoConformidades();
+      salvarRascunhoAutomatico();
+    }
+
+    function renderizarNaoConformidades() {
+      const cont = document.getElementById("listaNaoConformidadesUI");
+      if (InspectionModel.semNC) {
+        cont.innerHTML = `<div class="p-3 bg-emerald-50 border border-emerald-200 rounded-lg text-xs text-emerald-900 font-semibold">✓ Declarado que não foram constatadas não conformidades no momento da inspeção.</div>`;
+        return;
+      }
+      if (InspectionModel.naoConformidades.length === 0) {
+        cont.innerHTML = `<div class="p-3 bg-slate-50 border rounded-lg text-xs text-slate-500">Nenhuma não conformidade adicionada até ao momento.</div>`;
+        return;
+      }
+      cont.innerHTML = InspectionModel.naoConformidades.map((nc, i) => `
+        <div class="flex items-start justify-between gap-3 p-3 bg-white border rounded-lg shadow-sm text-xs">
+          <div>
+            <span class="font-bold text-blue-900">6.${i + 1}</span> — ${escapeHtml(nc.descricao)}
+            <span class="block text-[11px] text-slate-500 mt-0.5">Base Legal: ${escapeHtml(nc.baseLegal)}</span>
+          </div>
+          <button type="button" onclick="removerNaoConformidade(${i})" class="text-red-600 hover:text-red-800 font-bold px-2">Excluir</button>
+        </div>
+      `).join("");
+    }
+
+    function importarFotos(event) {
+      const files = Array.from(event.target.files || []);
+      files.forEach((file) => {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          InspectionModel.fotos.push({
+            nome: file.name,
+            legenda: file.name.replace(/\.[^/.]+$/, ""),
+            dataUrl: e.target.result
+          });
+          renderizarGaleriaFotos();
+          salvarRascunhoAutomatico();
+        };
+        reader.readAsDataURL(file);
+      });
+    }
+
+    function renderizarGaleriaFotos() {
+      const gal = document.getElementById("galeriaFotosUI");
+      gal.innerHTML = InspectionModel.fotos.map((f, idx) => `
+        <div class="border rounded-lg p-2 bg-slate-50 text-xs">
+          <img src="${f.dataUrl}" class="w-full h-28 object-cover rounded mb-1.5" />
+          <input type="text" value="${escapeHtml(f.legenda)}" placeholder="Legenda da foto"
+            class="w-full border rounded px-2 py-1 text-[11px] mb-1"
+            oninput="InspectionModel.fotos[${idx}].legenda = this.value" />
+          <button type="button" onclick="InspectionModel.fotos.splice(${idx},1);renderizarGaleriaFotos();"
+            class="text-red-600 text-[11px] font-bold">Remover foto</button>
+        </div>
+      `).join("");
+    }
+
+    function renderizarConclusoes() {
+      const cont = document.getElementById("containerConclusoes");
+      cont.innerHTML = OPCOES_CONCLUSAO.map((op) => {
+        const checked = InspectionModel.conclusaoId === op.id;
+        return `
+          <label class="flex items-start gap-3 p-3 border rounded-lg cursor-pointer text-xs ${checked ? "bg-blue-50 border-blue-500" : "bg-slate-50"}">
+            <input type="radio" name="conclusaoRadio" ${checked ? "checked" : ""}
+              onchange="InspectionModel.conclusaoId='${op.id}';renderizarConclusoes();salvarRascunhoAutomatico();" class="mt-1" />
+            <div>
+              <div class="font-bold text-blue-950">${op.titulo}</div>
+              <div class="text-slate-700 mt-0.5">${op.texto}</div>
+            </div>
+          </label>
+        `;
+      }).join("");
+    }
+
+    function renderizarDocumentosSolicitados() {
+      const cont = document.getElementById("containerDocumentosSolicitados");
+      cont.innerHTML = DOCUMENTOS_PADRAO.map((doc) => {
+        const checked = InspectionModel.documentosSolicitados.includes(doc.id);
+        const isSubitem = doc.id.length > 1;
+        return `
+          <label class="flex items-start gap-2.5 p-2.5 border rounded-lg bg-slate-50 cursor-pointer text-xs ${isSubitem ? "ml-6" : ""}">
+            <input type="checkbox" ${checked ? "checked" : ""}
+              onchange="alternarDocumento('${doc.id}', this.checked)" class="mt-0.5" />
+            <span>${doc.texto}</span>
+          </label>
+        `;
+      }).join("");
+    }
+
+    function alternarDocumento(id, marcado) {
+      if (marcado) {
+        if (!InspectionModel.documentosSolicitados.includes(id)) InspectionModel.documentosSolicitados.push(id);
+      } else {
+        InspectionModel.documentosSolicitados = InspectionModel.documentosSolicitados.filter((d) => d !== id);
+      }
+      salvarRascunhoAutomatico();
+    }
+
+    // =========================================================================
+    // 9. SINCRONIZAÇÃO DOS CAMPOS E PRÉ-VISUALIZAÇÃO DO MODELO NOVO
+    // =========================================================================
+    function atualizarEstadoFormulario() {
+      const campos = [
+        "razao", "fantasia", "cnpj", "municipio", "endereco", "telefone",
+        "email", "responsavel", "cpfResp", "coordenadas", "vencimento",
+        "numero", "ano", "data", "contatada", "equipeInspetora",
+        "objetivoObs", "conclusaoComplemento", "prazoDocumentos"
+      ];
+      campos.forEach((id) => {
+        const el = document.getElementById(id);
+        if (el) InspectionModel[id] = el.value;
+      });
+      salvarRascunhoAutomatico();
+    }
+
+    function formatarDataBR(iso) {
+      if (!iso) return "";
+      const partes = iso.split("-");
+      return partes.length === 3 ? `${partes[2]}/${partes[1]}/${partes[0]}` : iso;
+    }
+
+    function renderizarDocumentoRI() {
+      atualizarEstadoFormulario();
+      const m = InspectionModel;
+      const conclusaoObj = OPCOES_CONCLUSAO.find((c) => c.id === m.conclusaoId) || OPCOES_CONCLUSAO[0];
+      const docsSelecionados = DOCUMENTOS_PADRAO.filter((d) => m.documentosSolicitados.includes(d.id));
+      const cnaesTexto = m.atividades.length > 0
+        ? m.atividades.map((a) => `${a.codigo} - ${a.descricao}`).join("; ")
+        : "Conforme alvará / requerimento";
+
+      const ncsHtml = m.semNC
+        ? `<p style="margin:4px 0;">Não foram constatadas não conformidades físico-funcionais ou operacionais no momento da inspeção.</p>`
+        : m.naoConformidades.map((nc, i) =>
+            `<p style="margin:3px 0;"><strong>6.${i + 1}.</strong> ${escapeHtml(nc.descricao)} <em>(Base Legal: ${escapeHtml(nc.baseLegal)})</em></p>`
+          ).join("");
+
+      const fotosHtml = m.fotos.length > 0
+        ? `<div class="ri-section-title" style="margin-top:8px;">ANEXO FOTOGRÁFICO</div>
+           <table class="ri-table">
+             <tr>
+               ${m.fotos.map((f, i) => `
+                 <td style="width:50%; text-align:center; padding:6px;">
+                   <img src="${f.dataUrl}" style="max-width:220px; max-height:150px; border:1px solid #000;" />
+                   <div style="font-size:8.5pt; margin-top:3px;"><strong>Foto ${i + 1}:</strong> ${escapeHtml(f.legenda)}</div>
+                 </td>
+               `).join("")}
+             </tr>
+           </table>`
+        : "";
+
+      const html = `
+        <table class="ri-table" style="margin-bottom:8px;">
+          <tr>
+            <td style="width:72%; text-align:center; vertical-align:middle;">
+              <div style="font-weight:bold; font-size:10.5pt;">ESTADO DO RIO GRANDE DO SUL</div>
+              <div style="font-weight:bold; font-size:10pt;">SECRETARIA DA SAÚDE</div>
+              <div style="font-size:9pt;">2ª COORDENADORIA REGIONAL DE SAÚDE — VIGILÂNCIA SANITÁRIA</div>
+              <div style="font-weight:bold; font-size:11pt; margin-top:4px;">RELATÓRIO DE INSPEÇÃO SANITÁRIA (MODELO NOVO)</div>
+            </td>
+            <td style="width:28%; text-align:center; vertical-align:middle;">
+              <div style="font-size:8.5pt; font-weight:bold;">RELATÓRIO DE INSPEÇÃO Nº</div>
+              <div style="font-size:13pt; font-weight:bold; margin:4px 0;">${escapeHtml(m.numero)}/${escapeHtml(m.ano)}</div>
+              <div style="font-size:8.5pt;"><strong>Data:</strong> ${formatarDataBR(m.data)}</div>
+            </td>
+          </tr>
+        </table>
+
+        <div class="ri-section-title">1. IDENTIFICAÇÃO DO ESTABELECIMENTO</div>
+        <table class="ri-table">
+          <tr>
+            <td colspan="2"><span class="ri-label">1. Razão Social:</span><div class="ri-value">${escapeHtml(m.razao)}</div></td>
+            <td><span class="ri-label">2. Nome Fantasia:</span><div class="ri-value">${escapeHtml(m.fantasia)}</div></td>
+          </tr>
+          <tr>
+            <td><span class="ri-label">3. CNPJ / CPF:</span><div class="ri-value">${escapeHtml(m.cnpj)}</div></td>
+            <td><span class="ri-label">4. Município:</span><div class="ri-value">${escapeHtml(m.municipio)}</div></td>
+            <td><span class="ri-label">5. Vencimento Alvará:</span><div class="ri-value">${escapeHtml(m.vencimento)}</div></td>
+          </tr>
+          <tr>
+            <td colspan="2"><span class="ri-label">6. Endereço Completo:</span><div class="ri-value">${escapeHtml(m.endereco)}</div></td>
+            <td><span class="ri-label">7. Coordenadas:</span><div class="ri-value">${escapeHtml(m.coordenadas)}</div></td>
+          </tr>
+          <tr>
+            <td><span class="ri-label">8. Telefone:</span><div class="ri-value">${escapeHtml(m.telefone)}</div></td>
+            <td colspan="2"><span class="ri-label">9. E-mail:</span><div class="ri-value">${escapeHtml(m.email)}</div></td>
+          </tr>
+          <tr>
+            <td colspan="2"><span class="ri-label">10. Responsável Legal / Técnico:</span><div class="ri-value">${escapeHtml(m.responsavel)}</div></td>
+            <td><span class="ri-label">11. CPF / Conselho:</span><div class="ri-value">${escapeHtml(m.cpfResp)}</div></td>
+          </tr>
+        </table>
+
+        <div class="ri-section-title">2. ATIVIDADES (CNAE), PESSOA CONTACTADA E OBJETIVO DA INSPEÇÃO</div>
+        <table class="ri-table">
+          <tr>
+            <td colspan="2"><span class="ri-label">3. Atividades Inspecionadas (CNAE):</span><div class="ri-value">${escapeHtml(cnaesTexto)}</div></td>
+          </tr>
+          <tr>
+            <td><span class="ri-label">4. Pessoa Contactada:</span><div class="ri-value">${escapeHtml(m.contatada)}</div></td>
+            <td><span class="ri-label">5. Objetivo da Inspeção:</span><div class="ri-value">${escapeHtml(m.objetivos.join(", "))}${m.objetivoObs ? " — " + escapeHtml(m.objetivoObs) : ""}</div></td>
+          </tr>
+          <tr>
+            <td colspan="2"><span class="ri-label">Base Legal Aplicável:</span><div class="ri-value">${escapeHtml(buscarLegislacaoPorCnae())}</div></td>
+          </tr>
+        </table>
+
+        <div class="ri-section-title">6. NÃO CONFORMIDADES CONSTATADAS</div>
+        <table class="ri-table">
+          <tr>
+            <td>${ncsHtml}</td>
+          </tr>
+        </table>
+
+        <div class="ri-section-title">7. CONCLUSÃO</div>
+        <table class="ri-table">
+          <tr>
+            <td>
+              <p style="margin:3px 0;"><strong>${escapeHtml(conclusaoObj.titulo)}:</strong> ${escapeHtml(conclusaoObj.texto)}</p>
+              ${m.conclusaoComplemento ? `<p style="margin:3px 0;">${escapeHtml(m.conclusaoComplemento)}</p>` : ""}
+            </td>
+          </tr>
+        </table>
+
+        <div class="ri-section-title">8. DOCUMENTOS SOLICITADOS (PRAZO: ${escapeHtml(m.prazoDocumentos)} DIAS)</div>
+        <table class="ri-table">
+          <tr>
+            <td>
+              ${docsSelecionados.length > 0
+                ? docsSelecionados.map((d) => `<p style="margin:2px 0;">[ X ] ${escapeHtml(d.texto)}</p>`).join("")
+                : `<p style="margin:2px 0;">Sem exigências documentais pendentes.</p>`}
+            </td>
+          </tr>
+        </table>
+
+        ${fotosHtml}
+
+        <div class="ri-section-title" style="margin-top:8px;">9. IDENTIFICAÇÃO E ASSINATURAS</div>
+        <table class="ri-table">
+          <tr>
+            <td style="width:50%; height:70px; vertical-align:bottom; text-align:center;">
+              <div>_________________________________________________</div>
+              <div style="font-size:8.5pt; font-weight:bold;">Equipa Inspetora — 2ª CRS / SES-RS</div>
+              <div style="font-size:8pt;">${escapeHtml(m.equipeInspetora)}</div>
+            </td>
+            <td style="width:50%; height:70px; vertical-align:bottom; text-align:center;">
+              <div>_________________________________________________</div>
+              <div style="font-size:8.5pt; font-weight:bold;">Pessoa Contactada / Ciência do Estabelecimento</div>
+              <div style="font-size:8pt;">${escapeHtml(m.contatada || m.responsavel)}</div>
+            </td>
+          </tr>
+        </table>
+      `;
+
+      document.getElementById("preview-documento-ri").innerHTML = html;
+      return html;
+    }
+
+    function exibirStatusValidacao() {
+      const validacao = ContractValidator.validarModelo(InspectionModel);
+      const badge = document.getElementById("alertaValidacaoRevisao");
+      const painel = document.getElementById("painelErrosContrato");
+
+      if (validacao.valido) {
+        badge.className = "text-xs font-bold px-3 py-1.5 rounded bg-emerald-100 text-emerald-800";
+        badge.textContent = "✓ Todos os campos obrigatórios preenchidos";
+        painel.classList.add("hidden");
+      } else {
+        badge.className = "text-xs font-bold px-3 py-1.5 rounded bg-amber-100 text-amber-800";
+        badge.textContent = `⚠️ ${validacao.erros.length} pendência(s) encontrada(s)`;
+        painel.classList.remove("hidden");
+        painel.innerHTML = `<div class="font-bold mb-1">Corrija antes de emitir:</div>` +
+          validacao.erros.map((e) => `<div>• ${escapeHtml(e)}</div>`).join("");
+      }
+    }
+
+    // =========================================================================
+    // 10. EXPORTAÇÃO WORD (.DOC) E PDF ESTRITAMENTE IGUAL AO MODELO WORD
+    // =========================================================================
+    function montarNomeBaseArquivo() {
+      const num = (InspectionModel.numero || "000").replace(/\D/g, "");
+      const razaoLimpa = (InspectionModel.razao || "Estabelecimento")
+        .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+        .replace(/[^a-zA-Z0-9]+/g, "_").replace(/^_|_$/g, "").substring(0, 35);
+      return `RI_${num}_${InspectionModel.ano}_${razaoLimpa}`;
+    }
+
+    function gerarHtmlCompletoWord() {
+      const corpo = renderizarDocumentoRI();
+      return `<html xmlns:o="urn:schemas-microsoft-com:office:office"
+                    xmlns:w="urn:schemas-microsoft-com:office:word"
+                    xmlns="http://www.w3.org/TR/REC-html40">
+        <head>
+          <meta charset="utf-8">
+          <title>Relatório de Inspeção</title>
+          <style>
+            @page Section1 { size: 21cm 29.7cm; margin: 1.2cm 1.5cm; }
+            div.Section1 { page: Section1; }
+            body { font-family: Arial, Helvetica, sans-serif; font-size: 10pt; color: #000; }
+            table { width: 100%; border-collapse: collapse; margin-bottom: 6px; font-family: Arial, sans-serif; font-size: 9.5pt; }
+            th, td { border: 1px solid #000; padding: 4px 6px; vertical-align: top; }
+            .ri-section-title { background-color: #d9d9d9; font-weight: bold; text-align: center; border: 1px solid #000; padding: 4px; font-size: 9.5pt; }
+            .ri-label { font-weight: bold; font-size: 8.5pt; display: block; }
+            .ri-value { font-size: 9.5pt; }
+          </style>
+        </head>
+        <body><div class="Section1">${corpo}</div></body>
+      </html>`;
+    }
+
+    function exportarWordModeloNovo() {
+      const validacao = ContractValidator.validarModelo(InspectionModel);
+      if (!validacao.valido) {
+        exibirStatusValidacao();
+        alert("Preencha os campos obrigatórios antes de exportar:\n- " + validacao.erros.join("\n- "));
+        return;
+      }
+
+      const htmlWord = gerarHtmlCompletoWord();
+      const blob = new Blob(["\ufeff", htmlWord], { type: "application/msword;charset=utf-8" });
+      const nomeBase = montarNomeBaseArquivo();
+
+      reservarNumeroDefinitivo(InspectionModel.numero);
+      registrarNoHistorico("WORD");
+      saveAs(blob, `${nomeBase}.doc`);
+    }
+
+    // Constrói um pacote .docx OpenXML válido com o conteúdo exato do Modelo Novo para o Google Apps Script
+    async function construirBlobDocxOpenXML() {
+      const m = InspectionModel;
+      const conclusaoObj = OPCOES_CONCLUSAO.find((c) => c.id === m.conclusaoId) || OPCOES_CONCLUSAO[0];
+      const docsSelecionados = DOCUMENTOS_PADRAO.filter((d) => m.documentosSolicitados.includes(d.id));
+      const cnaesTexto = m.atividades.length > 0
+        ? m.atividades.map((a) => `${a.codigo} - ${a.descricao}`).join("; ")
+        : "Conforme alvará / requerimento";
+
+      const xmlEsc = (s) => String(s || "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+
+      const celula = (label, valor, larguraPct = 5000, shaded = false) => `
+        <w:tc>
+          <w:tcPr>
+            <w:tcW w:w="${larguraPct}" w:type="pct"/>
+            ${shaded ? '<w:shd w:val="clear" w:color="auto" w:fill="D9D9D9"/>' : ""}
+          </w:tcPr>
+          ${label ? `<w:p><w:r><w:rPr><w:b/><w:sz w:val="18"/></w:rPr><w:t>${xmlEsc(label)}</w:t></w:r></w:p>` : ""}
+          <w:p><w:r><w:rPr><w:sz w:val="19"/></w:rPr><w:t>${xmlEsc(valor)}</w:t></w:r></w:p>
+        </w:tc>`;
+
+      const linhaSecao = (titulo) => `
+        <w:tr>
+          <w:tc>
+            <w:tcPr>
+              <w:tcW w:w="5000" w:type="pct"/>
+              <w:gridSpan w:val="2"/>
+              <w:shd w:val="clear" w:color="auto" w:fill="D9D9D9"/>
+            </w:tcPr>
+            <w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:b/><w:sz w:val="19"/></w:rPr><w:t>${xmlEsc(titulo)}</w:t></w:r></w:p>
+          </w:tc>
+        </w:tr>`;
+
+      const ncsTexto = m.semNC
+        ? "Não foram constatadas não conformidades no momento da inspeção."
+        : m.naoConformidades.map((nc, i) => `6.${i + 1}. ${nc.descricao} (${nc.baseLegal})`).join(" | ");
+
+      const docsTexto = docsSelecionados.length > 0
+        ? docsSelecionados.map((d) => `[X] ${d.texto}`).join(" | ")
+        : "Sem exigências documentais pendentes.";
+
+      const documentXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+        <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+          <w:body>
+            <w:tbl>
+              <w:tblPr>
+                <w:tblW w:w="5000" w:type="pct"/>
+                <w:tblBorders>
+                  <w:top w:val="single" w:sz="6" w:space="0" w:color="000000"/>
+                  <w:left w:val="single" w:sz="6" w:space="0" w:color="000000"/>
+                  <w:bottom w:val="single" w:sz="6" w:space="0" w:color="000000"/>
+                  <w:right w:val="single" w:sz="6" w:space="0" w:color="000000"/>
+                  <w:insideH w:val="single" w:sz="6" w:space="0" w:color="000000"/>
+                  <w:insideV w:val="single" w:sz="6" w:space="0" w:color="000000"/>
+                </w:tblBorders>
+              </w:tblPr>
+              <w:tr>
+                ${celula("ESTADO DO RIO GRANDE DO SUL - SECRETARIA DA SAÚDE - 2ª CRS", "RELATÓRIO DE INSPEÇÃO SANITÁRIA (MODELO NOVO)", 3500)}
+                ${celula("RELATÓRIO DE INSPEÇÃO Nº", `${m.numero}/${m.ano} - Data: ${formatarDataBR(m.data)}`, 1500)}
+              </w:tr>
+              ${linhaSecao("1. IDENTIFICAÇÃO DO ESTABELECIMENTO")}
+              <w:tr>${celula("1. Razão Social:", m.razao, 2500)}${celula("2. Nome Fantasia:", m.fantasia, 2500)}</w:tr>
+              <w:tr>${celula("3. CNPJ / CPF:", m.cnpj, 2500)}${celula("4. Município / Vencimento Alvará:", `${m.municipio} | ${m.vencimento}`, 2500)}</w:tr>
+              <w:tr>${celula("6. Endereço Completo:", m.endereco, 2500)}${celula("7. Coordenadas / Telefone / E-mail:", `${m.coordenadas} | ${m.telefone} | ${m.email}`, 2500)}</w:tr>
+              <w:tr>${celula("10. Responsável Legal / Técnico:", m.responsavel, 2500)}${celula("11. CPF / Conselho:", m.cpfResp, 2500)}</w:tr>
+              ${linhaSecao("2. ATIVIDADES (CNAE), CONTACTADO E OBJETIVO")}
+              <w:tr>${celula("3. Atividades Inspecionadas (CNAE):", cnaesTexto, 2500)}${celula("4. Pessoa Contactada:", m.contatada, 2500)}</w:tr>
+              <w:tr>${celula("5. Objetivo da Inspeção:", m.objetivos.join(", ") + (m.objetivoObs ? " - " + m.objetivoObs : ""), 2500)}${celula("Base Legal Aplicável:", buscarLegislacaoPorCnae(), 2500)}</w:tr>
+              ${linhaSecao("6. NÃO CONFORMIDADES CONSTATADAS")}
+              <w:tr><w:tc><w:tcPr><w:tcW w:w="5000" w:type="pct"/><w:gridSpan w:val="2"/></w:tcPr><w:p><w:r><w:rPr><w:sz w:val="19"/></w:rPr><w:t>${xmlEsc(ncsTexto)}</w:t></w:r></w:p></w:tc></w:tr>
+              ${linhaSecao("7. CONCLUSÃO")}
+              <w:tr><w:tc><w:tcPr><w:tcW w:w="5000" w:type="pct"/><w:gridSpan w:val="2"/></w:tcPr><w:p><w:r><w:rPr><w:sz w:val="19"/></w:rPr><w:t>${xmlEsc(conclusaoObj.titulo + ": " + conclusaoObj.texto + " " + m.conclusaoComplemento)}</w:t></w:r></w:p></w:tc></w:tr>
+              ${linhaSecao(`8. DOCUMENTOS SOLICITADOS (PRAZO: ${m.prazoDocumentos} DIAS)`)}
+              <w:tr><w:tc><w:tcPr><w:tcW w:w="5000" w:type="pct"/><w:gridSpan w:val="2"/></w:tcPr><w:p><w:r><w:rPr><w:sz w:val="19"/></w:rPr><w:t>${xmlEsc(docsTexto)}</w:t></w:r></w:p></w:tc></w:tr>
+              ${linhaSecao("9. IDENTIFICAÇÃO E ASSINATURAS")}
+              <w:tr>${celula("Equipa Inspetora (2ª CRS / SES-RS):", m.equipeInspetora, 2500)}${celula("Pessoa Contactada / Ciência:", m.contatada || m.responsavel, 2500)}</w:tr>
+            </w:tbl>
+          </w:body>
+        </w:document>`;
+
+      const contentTypesXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+        <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+          <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+          <Default Extension="xml" ContentType="application/xml"/>
+          <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+        </Types>`;
+
+      const relsXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+        <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+          <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+        </Relationships>`;
+
+      const zip = new JSZip();
+      zip.file("[Content_Types].xml", contentTypesXml);
+      zip.folder("_rels").file(".rels", relsXml);
+      zip.folder("word").file("document.xml", documentXml);
+
+      return await zip.generateAsync({
+        type: "blob",
+        mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+      });
+    }
+
+    function blobParaBase64(blob) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result.split(",")[1]);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+    }
+
+    // Função principal do botão "Imprimir / Salvar em PDF"
+    async function baixarPDFModeloWord(botaoElemento) {
+      const validacao = ContractValidator.validarModelo(InspectionModel);
+      if (!validacao.valido) {
+        exibirStatusValidacao();
+        alert("Preencha os campos obrigatórios antes de gerar o PDF:\n- " + validacao.erros.join("\n- "));
+        return;
+      }
+
+      const textoOriginal = botaoElemento ? botaoElemento.innerHTML : "🖨️ Imprimir / Salvar em PDF";
+      const nomeLimpo = montarNomeBaseArquivo();
+      renderizarDocumentoRI();
+
+      try {
+        if (botaoElemento) {
+          botaoElemento.disabled = true;
+          botaoElemento.innerHTML = "⏳ Gerando PDF igual ao Word...";
+        }
+
+        // 1. Tenta converter via Google Apps Script usando o pacote .docx fiel ao modelo Word
+        const docxBlob = await construirBlobDocxOpenXML();
+        const docxBase64 = await blobParaBase64(docxBlob);
+
+        const resposta = await fetch(URL_CONVERSOR_PDF, {
+          method: "POST",
+          headers: { "Content-Type": "text/plain;charset=utf-8" },
+          body: JSON.stringify({
+            fileName: nomeLimpo,
+            docxBase64: docxBase64
+          })
+        });
+
+        const resultado = await resposta.json();
+        if (!resultado.sucesso) {
+          throw new Error(resultado.erro || "Falha na resposta do Google Apps Script");
+        }
+
+        const bytesPdf = atob(resultado.pdfBase64);
+        const byteArray = new Uint8Array(bytesPdf.length);
+        for (let i = 0; i < bytesPdf.length; i++) {
+          byteArray[i] = bytesPdf.charCodeAt(i);
+        }
+        const pdfBlob = new Blob([byteArray], { type: "application/pdf" });
+
+        reservarNumeroDefinitivo(InspectionModel.numero);
+        registrarNoHistorico("PDF");
+        saveAs(pdfBlob, `${nomeLimpo}.pdf`);
+
+      } catch (erroAppsScript) {
+        console.warn("A usar geração direta local de PDF (fallback do Apps Script):", erroAppsScript);
+        // 2. Fallback automático: gera e descarrega o PDF diretamente a partir da folha A4 do modelo Word sem abrir a janela de impressão
+        const elementoFolhaWord = document.getElementById("preview-documento-ri");
+        await html2pdf().set({
+          margin: [8, 8, 8, 8],
+          filename: `${nomeLimpo}.pdf`,
+          image: { type: "jpeg", quality: 0.98 },
+          html2canvas: { scale: 2, useCORS: true },
+          jsPDF: { unit: "mm", format: "a4", orientation: "portrait" }
+        }).from(elementoFolhaWord).save();
+
+        reservarNumeroDefinitivo(InspectionModel.numero);
+        registrarNoHistorico("PDF");
+      } finally {
+        if (botaoElemento) {
+          botaoElemento.disabled = false;
+          botaoElemento.innerHTML = textoOriginal;
+        }
+      }
+    }
+
+    // =========================================================================
+    // 11. GESTÃO DE RASCUNHOS, HISTÓRICO E NOVA INSPEÇÃO
+    // =========================================================================
+    function salvarRascunhoAutomatico() {
+      try {
+        localStorage.setItem("ri_2crs_rascunho_atual", JSON.stringify(InspectionModel));
+      } catch (e) {}
+    }
+
+    function registrarNoHistorico(formatoEmitido) {
+      try {
+        const hist = JSON.parse(localStorage.getItem("ri_2crs_historico") || "[]");
+        hist.unshift({
+          id: Date.now(),
+          numero: InspectionModel.numero,
+          ano: InspectionModel.ano,
+          data: InspectionModel.data,
+          razao: InspectionModel.razao,
+          cnpj: InspectionModel.cnpj,
+          municipio: InspectionModel.municipio,
+          formato: formatoEmitido,
+          emitidoEm: new Date().toLocaleString("pt-BR"),
+          snapshot: JSON.parse(JSON.stringify(InspectionModel))
+        });
+        localStorage.setItem("ri_2crs_historico", JSON.stringify(hist.slice(0, 100)));
+      } catch (e) {}
+    }
+
+    function abrirModalRascunhos() {
+      const modal = document.getElementById("modalLista");
+      const cont = document.getElementById("conteudoModalLista");
+      document.getElementById("tituloModalLista").textContent = "📝 Rascunho Guardado Automaticamente";
+      const rascunhoStr = localStorage.getItem("ri_2crs_rascunho_atual");
+
+      if (!rascunhoStr) {
+        cont.innerHTML = `<p class="text-slate-500">Nenhum rascunho guardado no navegador.</p>`;
+      } else {
+        const r = JSON.parse(rascunhoStr);
+        cont.innerHTML = `
+          <div class="p-3 border rounded-lg flex items-center justify-between bg-slate-50">
+            <div>
+              <div class="font-bold text-blue-900">RI ${escapeHtml(r.numero)}/${escapeHtml(r.ano)} — ${escapeHtml(r.razao || "Sem Razão Social")}</div>
+              <div class="text-slate-500">CNPJ: ${escapeHtml(r.cnpj)} | Município: ${escapeHtml(r.municipio)}</div>
+            </div>
+            <button onclick="restaurarSnapshotRascunho()" class="bg-blue-900 text-white px-3 py-1.5 rounded font-bold">Restaurar</button>
+          </div>`;
+      }
+      modal.classList.remove("hidden");
+      modal.classList.add("flex");
+    }
+
+    function restaurarSnapshotRascunho() {
+      const r = JSON.parse(localStorage.getItem("ri_2crs_rascunho_atual") || "null");
+      if (!r) return;
+      carregarSnapshotNoFormulario(r);
+      fecharModalLista();
+    }
+
+    function abrirModalHistorico() {
+      const modal = document.getElementById("modalLista");
+      const cont = document.getElementById("conteudoModalLista");
+      document.getElementById("tituloModalLista").textContent = "🗂️ Histórico de RIs Emitidos";
+      const hist = JSON.parse(localStorage.getItem("ri_2crs_historico") || "[]");
+
+      if (hist.length === 0) {
+        cont.innerHTML = `<p class="text-slate-500">Nenhum relatório emitido até ao momento.</p>`;
+      } else {
+        cont.innerHTML = hist.map((item, idx) => `
+          <div class="p-3 border rounded-lg flex items-center justify-between bg-slate-50">
+            <div>
+              <div class="font-bold text-blue-900">RI ${escapeHtml(item.numero)}/${escapeHtml(item.ano)} — ${escapeHtml(item.razao)}</div>
+              <div class="text-slate-500">CNPJ: ${escapeHtml(item.cnpj)} | Emitido (${item.formato}): ${escapeHtml(item.emitidoEm)}</div>
+            </div>
+            <button onclick="carregarItemHistorico(${idx})" class="bg-blue-900 text-white px-3 py-1.5 rounded font-bold">Reabrir</button>
+          </div>
+        `).join("");
+      }
+      modal.classList.remove("hidden");
+      modal.classList.add("flex");
+    }
+
+    function carregarItemHistorico(idx) {
+      const hist = JSON.parse(localStorage.getItem("ri_2crs_historico") || "[]");
+      if (hist[idx] && hist[idx].snapshot) {
+        carregarSnapshotNoFormulario(hist[idx].snapshot);
+        fecharModalLista();
+      }
+    }
+
+    function carregarSnapshotNoFormulario(snap) {
+      Object.assign(InspectionModel, snap);
+      const campos = [
+        "razao", "fantasia", "cnpj", "municipio", "endereco", "telefone",
+        "email", "responsavel", "cpfResp", "coordenadas", "vencimento",
+        "numero", "ano", "data", "contatada", "equipeInspetora",
+        "objetivoObs", "conclusaoComplemento", "prazoDocumentos"
+      ];
+      campos.forEach((id) => {
+        const el = document.getElementById(id);
+        if (el) el.value = InspectionModel[id] || "";
+      });
+      document.getElementById("semNC").checked = !!InspectionModel.semNC;
+      renderizarCheckboxesCnae();
+      renderizarObjetivos();
+      renderizarNaoConformidades();
+      renderizarGaleriaFotos();
+      renderizarConclusoes();
+      renderizarDocumentosSolicitados();
+      irParaPasso(1);
+    }
+
+    function fecharModalLista() {
+      const modal = document.getElementById("modalLista");
+      modal.classList.add("hidden");
+      modal.classList.remove("flex");
+    }
+
+    function novaInspecao() {
+      if (!confirm("Deseja iniciar um novo Relatório de Inspeção e limpar os campos atuais?")) return;
+      Object.assign(InspectionModel, {
+        razao: "", fantasia: "", cnpj: "", municipio: "", endereco: "",
+        telefone: "", email: "", responsavel: "", cpfResp: "", coordenadas: "",
+        vencimento: "", numero: obterProximoNumeroLivre(),
+        ano: new Date().getFullYear().toString(),
+        data: new Date().toISOString().split("T")[0],
+        contatada: "", equipeInspetora: "",
+        objetivos: ["Renovação de Alvará Sanitário"], objetivoObs: "",
+        atividades: [], semNC: false, naoConformidades: [], fotos: [],
+        conclusaoId: "A", conclusaoComplemento: "", prazoDocumentos: "30",
+        documentosSolicitados: ["A", "C", "C1", "C2", "C5", "C6", "D"]
+      });
+      carregarSnapshotNoFormulario(InspectionModel);
+    }
+
+    function escapeHtml(str) {
+      return String(str || "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    }
+  </script>
+</body>
+</html>
